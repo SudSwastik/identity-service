@@ -1,0 +1,32 @@
+# Maven
+app/target/
+app/*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.DS_Store
+
+# Terraform
+terraform/.terraform/
+terraform/**/.terraform/
+terraform/*.tfstate
+terraform/**/*.tfstate
+terraform/*.tfstate.backup
+terraform/**/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/**/.terraform.lock.hcl
+terraform/environments/**/terraform.tfvars
+
+# Env files
+docker/.env
+**/.env
+
+# Logs
+*.log
+logs/
+
+# Agent
+.claude
+CLAUDE.md
