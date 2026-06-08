@@ -22,7 +22,7 @@ Authentication is fully delegated to **AWS Cognito** (registration, login, token
 │  ┌─────────────────┐    ┌──────────────────────────────────────┐    │
 │  │  SecurityConfig │    │         JwtAuthenticationConverter   │    │
 │  │                 │    │                                      │    │
-│  │  - Stateless    │───▶│  1. Extract sub + cognito:groups     │    │
+│  │  - Stateless    │───▶│  1. Extract sub claim                │    │
 │  │  - JWKS cached  │    │  2. Query PostgreSQL user_roles      │    │
 │  │  - Public:      │    │  3. Merge into GrantedAuthority set  │    │
 │  │    /api/auth/** │    └──────────────────────────────────────┘    │
@@ -72,9 +72,11 @@ Client Request (Bearer token)
 Spring Security ──▶ Fetch/Cache Cognito JWKS ──▶ Validate JWT signature + expiry
          │
          ▼
-JwtAuthenticationConverter
+JwtAuthenticationConverter (PostgreSQL-backed)
   ├── Extract sub claim (Cognito user UUID)
-  └── Query PostgreSQL: SELECT roles + permissions WHERE cognito_sub = sub
+  └── UserRoleService.getAuthoritiesForUser(sub)
+        ├── ROLE_<name> for each assigned role
+        └── <resource>:<action> for each permission in those roles
       (cognito:groups intentionally ignored — PostgreSQL is authoritative)
          │
          ▼
@@ -207,6 +209,7 @@ Permissions have no `name` column. Identity is `(resource, action)` with a `UNIQ
 | POST | `/reset-password` | Public | Confirm new password with code |
 | POST | `/verify-email` | Public | Confirm email with Cognito code |
 | POST | `/resend-verification` | Public | Resend verification code |
+| POST | `/mfa-challenge` | Public | Complete MFA challenge after login (returns tokens) |
 
 ### MFA — `/api/mfa`
 
@@ -286,6 +289,7 @@ mvn test -Dtest=RoleServiceTest#shouldAssignRole
 | `COGNITO_JWKS_URI` | dev/prod | Cognito JWKS endpoint |
 | `COGNITO_USER_POOL_ID` | dev/prod | Cognito User Pool ID |
 | `COGNITO_CLIENT_ID` | dev/prod | Cognito App Client ID |
+| `COGNITO_CLIENT_SECRET` | optional | App client secret — omit if client has no secret |
 | `SPRING_DATASOURCE_URL` | dev/prod | `jdbc:postgresql://<host>:5432/identity_service` |
 | `SPRING_DATASOURCE_USERNAME` | dev/prod | DB username |
 | `SPRING_DATASOURCE_PASSWORD` | dev/prod | DB password |
