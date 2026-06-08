@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+  mail:
+    host: ${SES_SMTP_HOST:email-smtp.us-east-1.amazonaws.com}
+    port: 587
+    username: ${SES_USERNAME}
+    password: ${SES_PASSWORD}
+    protocol: smtp
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+
+logging:
+  level:
+    root: INFO
+    com.sudswastik.identityservice: INFO
