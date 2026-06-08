@@ -1,6 +1,6 @@
 # Maven
-app/target/
-app/*.log
+target/
+*.log
 
 # IDE
 .idea/

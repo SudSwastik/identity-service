@@ -89,16 +89,18 @@ Controller Method (@PreAuthorize / hasAuthority checks)
 ## MFA Setup Flow
 
 ```
-POST /api/mfa/setup
+POST /api/mfa/setup  (Bearer required)
   └── Cognito AssociateSoftwareToken
-        └── Returns secret seed
-              └── App generates otpauth:// URI (Google Authenticator / Authy compatible)
+        └── Returns { secretCode, qrCodeUri }
+              qrCodeUri = otpauth://totp/<appName>:<username>?secret=...
+              (render as QR code — compatible with Google Authenticator / Authy)
 
-User scans QR code and gets 6-digit TOTP code
+User scans QR code and enters the 6-digit TOTP code
 
-POST /api/mfa/verify-setup  { code: "123456" }
-  └── Cognito VerifySoftwareToken
-        └── MFA activated on Cognito user pool entry
+POST /api/mfa/verify-setup  { userCode: "123456" }
+  └── Cognito VerifySoftwareToken (validates the code)
+        └── AdminSetUserMFAPreference (enables TOTP as preferred MFA)
+              └── MFA active — login flow now returns a SOFTWARE_TOKEN_MFA challenge
 ```
 
 ## Database Schema
@@ -225,10 +227,11 @@ Permissions have no `name` column. Identity is `(resource, action)` with a `UNIQ
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/` | ADMIN | List all roles |
-| POST | `/` | ADMIN | Create role |
-| PUT | `/{id}` | ADMIN | Update role |
-| DELETE | `/{id}` | ADMIN | Delete role |
-| POST | `/{id}/permissions` | ADMIN | Assign permissions to role |
+| POST | `/` | ADMIN | Create role — returns `201 Created` |
+| PUT | `/{id}` | ADMIN | Update role name/description |
+| DELETE | `/{id}` | ADMIN | Delete role — returns `204 No Content` |
+| POST | `/{id}/permissions` | ADMIN | Assign permissions to role (idempotent) |
+| DELETE | `/{id}/permissions/{permissionId}` | ADMIN | Revoke a single permission from role |
 | POST | `/assign` | ADMIN | Assign role to user (by sub) |
 | DELETE | `/revoke` | ADMIN | Revoke role from user |
 
@@ -236,11 +239,22 @@ Permissions have no `name` column. Identity is `(resource, action)` with a `UNIQ
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/me` | Bearer | Current user profile + roles |
-| PUT | `/me` | Bearer | Update Cognito profile attributes |
-| GET | `/{sub}` | ADMIN | Get user by Cognito sub |
+| GET | `/me` | Bearer | Current user profile + roles (Cognito + PostgreSQL) |
+| PUT | `/me` | Bearer | Update Cognito `name` attribute |
+| GET | `/{sub}` | ADMIN | Get any user by Cognito sub |
 | POST | `/{sub}/disable` | ADMIN | Disable user (Cognito AdminDisableUser — reversible) |
 | POST | `/{sub}/enable` | ADMIN | Re-enable a disabled user |
+
+### Error Responses
+
+All errors use [RFC 9457 Problem Detail](https://www.rfc-editor.org/rfc/rfc9457) format (`application/problem+json`):
+
+| Status | Trigger |
+|--------|---------|
+| `400` | `AuthException` — Cognito rejected the request |
+| `404` | `ResourceNotFoundException` — role, permission, or user not found |
+| `409` | `ConflictException` or optimistic lock failure |
+| `422` | Validation failure (`@Valid` / `@NotBlank` / `@Pattern` etc.) |
 
 ## Local Development
 
