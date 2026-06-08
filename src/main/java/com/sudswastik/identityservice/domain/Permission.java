@@ -2,26 +2,36 @@ package com.sudswastik.identityservice.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import lombok.experimental.SuperBuilder;
 
 @Entity
-@Table(name = "permissions")
+@Table(
+        name = "permissions",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_permission_resource_action",
+                columnNames = {"resource", "action"}
+        )
+)
 @Getter
 @Setter
 @NoArgsConstructor
-@AllArgsConstructor
-@Builder
-public class Permission {
+@SuperBuilder
+public class Permission extends Auditable {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
-    private String name;
+    @Version
+    private Long version;
 
     @Column(nullable = false, length = 100)
     private String resource;
 
     @Column(nullable = false, length = 50)
     private String action;
+
+    public String toPermissionString() {
+        return resource + ":" + action;
+    }
 }

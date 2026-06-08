@@ -4,7 +4,7 @@ A production-grade identity and access management service built with Spring Boot
 
 ## Architecture
 
-Authentication is fully delegated to **AWS Cognito** (registration, login, token issuance, MFA). Fine-grained **roles and permissions** live in **PostgreSQL**, linked to Cognito users via the `sub` claim (UUID). Spring Security validates JWTs automatically using Cognito's JWKS endpoint — no manual key management.
+Authentication is fully delegated to **AWS Cognito** (registration, login, token issuance, MFA). All authorization — roles, permissions, RBAC — lives exclusively in **PostgreSQL**, linked to Cognito users via the `sub` claim (UUID). Cognito groups are intentionally ignored; PostgreSQL is the single source of truth for access control. Spring Security validates JWTs automatically using Cognito's JWKS endpoint — no manual key management.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -74,8 +74,8 @@ Spring Security ──▶ Fetch/Cache Cognito JWKS ──▶ Validate JWT signat
          ▼
 JwtAuthenticationConverter
   ├── Extract sub claim (Cognito user UUID)
-  ├── Extract cognito:groups claim
   └── Query PostgreSQL: SELECT roles + permissions WHERE cognito_sub = sub
+      (cognito:groups intentionally ignored — PostgreSQL is authoritative)
          │
          ▼
 Merged GrantedAuthority set on SecurityContextHolder
@@ -106,39 +106,84 @@ POST /api/mfa/verify-setup  { code: "123456" }
 │                         PostgreSQL Schema                            │
 └─────────────────────────────────────────────────────────────────────┘
 
-┌──────────────────┐       ┌──────────────────────┐
-│      roles       │       │     permissions      │
-├──────────────────┤       ├──────────────────────┤
-│ id      BIGSERIAL│       │ id      BIGSERIAL    │
-│ name    VARCHAR  │       │ name    VARCHAR(100) │
-│ description TEXT │       │ resource VARCHAR(100)│
-│ created_at TSTZ  │       │ action  VARCHAR(50)  │
-└────────┬─────────┘       └─────────────┬─────── ┘
-         │                               │
-         │         ┌─────────────────────┘
-         │         │
-         ▼         ▼
-┌────────────────────────┐
-│    role_permissions     │
-├────────────────────────┤
-│ role_id       BIGINT ──┼──▶ roles.id
-│ permission_id BIGINT ──┼──▶ permissions.id
-│ PRIMARY KEY (role_id,  │
-│             permission │
-│             _id)       │
-└────────────────────────┘
+┌──────────────────────────┐       ┌──────────────────────────┐
+│          roles            │       │       permissions         │
+├──────────────────────────┤       ├──────────────────────────┤
+│ id          BIGSERIAL     │       │ id          BIGSERIAL     │
+│ version     BIGINT        │       │ version     BIGINT        │
+│ name        VARCHAR(100)  │       │ resource    VARCHAR(100)  │
+│ description VARCHAR(255)  │       │ action      VARCHAR(50)   │
+│ created_at  TSTZ          │       │ created_at  TSTZ          │
+│ created_by  VARCHAR(255)  │       │ created_by  VARCHAR(255)  │
+│ modified_at TSTZ          │       │ modified_at TSTZ          │
+│ modified_by VARCHAR(255)  │       │ modified_by VARCHAR(255)  │
+└────────────┬──────────────┘       └────────────┬─────────────┘
+             │                                   │
+             └──────────────┬────────────────────┘
+                            │
+                            ▼
+              ┌──────────────────────────────┐
+              │       role_permissions        │
+              ├──────────────────────────────┤
+              │ role_id       BIGINT ─────────┼──▶ roles.id
+              │ permission_id BIGINT ─────────┼──▶ permissions.id
+              │ assigned_at   TIMESTAMPTZ     │
+              │ assigned_by   VARCHAR(255)    │
+              │ PRIMARY KEY (role_id,         │
+              │              permission_id)   │
+              └──────────────────────────────┘
 
-┌──────────────────────────────────┐
-│           user_roles              │
-├──────────────────────────────────┤
-│ cognito_sub  VARCHAR(255) NOT NULL│  ◀── JWT sub claim (Cognito UUID)
-│ role_id      BIGINT        ───────┼──▶ roles.id
-│ assigned_at  TIMESTAMPTZ         │
-│ PRIMARY KEY (cognito_sub, role_id)│
-└──────────────────────────────────┘
+┌───────────────────────────────────┐
+│             user_roles             │
+├───────────────────────────────────┤
+│ cognito_sub VARCHAR(255) NOT NULL  │  ◀── JWT sub claim (Cognito UUID)
+│ role_id     BIGINT ───────────────┼──▶ roles.id
+│ assigned_at TIMESTAMPTZ           │
+│ assigned_by VARCHAR(255)          │  ◀── sub of admin who assigned
+│ PRIMARY KEY (cognito_sub, role_id) │
+└───────────────────────────────────┘
 
-INDEX: idx_user_roles_cognito_sub ON user_roles(cognito_sub)
+┌──────────────────────────────────────┐
+│              audit_logs               │
+├──────────────────────────────────────┤
+│ id          UUID (gen_random_uuid())  │
+│ entity_type VARCHAR(100)             │  e.g. "Role", "Permission"
+│ entity_id   VARCHAR(255)             │  stringified PK
+│ action      VARCHAR(50)              │  CREATE / UPDATE / DELETE / ASSIGN
+│ actor_sub   VARCHAR(255)             │  Cognito sub of who did it
+│ old_value   JSONB                    │  state before change
+│ new_value   JSONB                    │  state after change
+│ created_at  TIMESTAMPTZ              │
+└──────────────────────────────────────┘
+
+INDEXES:
+  idx_user_roles_cognito_sub  ON user_roles  (cognito_sub)
+  idx_audit_logs_entity       ON audit_logs  (entity_type, entity_id)
+  idx_audit_logs_actor        ON audit_logs  (actor_sub)
+  idx_audit_logs_created_at   ON audit_logs  (created_at DESC)
 ```
+
+### Permission Identity
+
+Permissions have no `name` column. Identity is `(resource, action)` with a `UNIQUE` constraint — e.g. `resource=users, action=read`. The application generates the display label as `resource:action` via `Permission.toPermissionString()`.
+
+### Audit Fields
+
+`roles` and `permissions` extend the `Auditable` base class. Fields are populated automatically by Spring Data JPA auditing; the auditor is the JWT `sub` of the authenticated user, or `"system"` for unauthenticated operations (Flyway seed, scheduled jobs).
+
+| Column | Type | Set on | Description |
+|--------|------|--------|-------------|
+| `created_at` | TIMESTAMPTZ | INSERT | Timestamp of creation |
+| `created_by` | VARCHAR | INSERT | Cognito `sub` of creator |
+| `modified_at` | TIMESTAMPTZ | INSERT + UPDATE | Timestamp of last change |
+| `modified_by` | VARCHAR | INSERT + UPDATE | Cognito `sub` of last modifier |
+| `version` | BIGINT | Every UPDATE | Optimistic lock counter — prevents silent lost updates |
+
+`role_permissions` and `user_roles` use `assigned_at` / `assigned_by` — these records are never updated, only created or deleted.
+
+### Audit Log
+
+`audit_logs` is append-only. It captures the full before/after state as JSONB, the entity type and ID, and the actor's Cognito `sub`. It answers questions like "who removed ADMIN from user X?" or "what did permission Y look like before it was changed?" that the inline audit columns cannot.
 
 ### Seed Data
 
@@ -191,7 +236,8 @@ INDEX: idx_user_roles_cognito_sub ON user_roles(cognito_sub)
 | GET | `/me` | Bearer | Current user profile + roles |
 | PUT | `/me` | Bearer | Update Cognito profile attributes |
 | GET | `/{sub}` | ADMIN | Get user by Cognito sub |
-| DELETE | `/{sub}` | ADMIN | Deactivate user |
+| POST | `/{sub}/disable` | ADMIN | Disable user (Cognito AdminDisableUser — reversible) |
+| POST | `/{sub}/enable` | ADMIN | Re-enable a disabled user |
 
 ## Local Development
 

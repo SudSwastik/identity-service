@@ -6,21 +6,26 @@ import lombok.*;
 import java.time.Instant;
 
 @Entity
-@Table(name = "user_roles")
+@Table(name = "role_permissions")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class UserRole {
+public class RolePermission {
 
     @EmbeddedId
-    private UserRoleId id;
+    private RolePermissionId id;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @MapsId("roleId")
     @JoinColumn(name = "role_id")
     private Role role;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @MapsId("permissionId")
+    @JoinColumn(name = "permission_id")
+    private Permission permission;
 
     @Column(name = "assigned_at", nullable = false, updatable = false)
     private Instant assignedAt;
