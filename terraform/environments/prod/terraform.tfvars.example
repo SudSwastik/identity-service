@@ -1,0 +1,16 @@
+aws_region = "us-east-1"
+domain     = "yourdomain.com"
+
+# Networking — replace with your VPC/subnet IDs
+vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"
+subnet_ids = ["subnet-xxxxxxxxxxxxxxxxx", "subnet-yyyyyyyyyyyyyyyyy"]
+
+# Security group of the ECS task / EC2 instance running the app
+app_security_group_id = "sg-xxxxxxxxxxxxxxxxx"
+
+# RDS sizing (prod defaults to db.t3.small, 50GB, Multi-AZ)
+db_instance_class       = "db.t3.small"
+db_allocated_storage_gb = 50
+
+# Do NOT commit real values — use environment variables or a secrets manager
+# db_password = "..."   # set via TF_VAR_db_password or -var flag

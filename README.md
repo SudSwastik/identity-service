@@ -344,14 +344,61 @@ mvn test -Dtest=RoleServiceTest#shouldAssignRole
 
 ## Infrastructure (Terraform)
 
+### Usage
+
 ```bash
 cd terraform/environments/dev
+
+# Copy and fill in your values
+cp terraform.tfvars.example terraform.tfvars
+
 terraform init
-terraform plan -var-file="terraform.tfvars"
-terraform apply -var-file="terraform.tfvars"
+terraform plan -var-file="terraform.tfvars" -var="db_password=$DB_PASSWORD"
+terraform apply -var-file="terraform.tfvars" -var="db_password=$DB_PASSWORD"
 ```
 
-Modules:
-- `modules/cognito` — User Pool, App Client, groups, MFA config
-- `modules/ses` — Domain identity and DNS verification
-- `modules/rds` — PostgreSQL instance (dev/prod only)
+> Pass sensitive values (`db_password`) via env var `TF_VAR_db_password` or `-var` flag — never commit them to `terraform.tfvars`.
+
+### Modules
+
+| Module | Resources |
+|--------|-----------|
+| `modules/cognito` | User Pool (email/password + TOTP MFA), App Client (server-side auth), 3 groups (ADMIN/USER/READONLY) |
+| `modules/ses` | Domain identity, DKIM, IAM user + SMTP credentials for JavaMailSender |
+| `modules/rds` | PostgreSQL 16 on RDS, subnet group, security group (locked to app SG) |
+
+### First-time DNS steps (after `terraform apply`)
+
+Terraform outputs the DNS records you need to add:
+
+```bash
+# Verify SES domain ownership
+terraform output ses_dns_verification_token   # → add as TXT _amazonses.<domain>
+
+# Enable DKIM signing
+terraform output ses_dkim_tokens              # → add 3 CNAME <token>._domainkey.<domain>
+```
+
+### Retrieve app credentials
+
+```bash
+# All values needed for docker/.env or ECS task definition
+terraform output cognito_issuer_uri
+terraform output cognito_jwks_uri
+terraform output cognito_user_pool_id
+terraform output cognito_client_id
+terraform output -json cognito_client_secret   # sensitive
+terraform output rds_jdbc_url
+terraform output ses_smtp_username
+terraform output -json ses_smtp_password       # sensitive
+```
+
+### Dev vs Prod differences
+
+| Setting | Dev | Prod |
+|---------|-----|------|
+| RDS instance | `db.t3.micro` | `db.t3.small` (configurable) |
+| Storage | 20 GB | 50 GB (configurable) |
+| Multi-AZ | No | Yes |
+| Deletion protection | Off | On |
+| Final snapshot | No | Yes |
