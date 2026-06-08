@@ -264,10 +264,10 @@ All errors use [RFC 9457 Problem Detail](https://www.rfc-editor.org/rfc/rfc9457)
 - Docker + Docker Compose
 - Maven 3.9+
 
-### Start
+### Option A — Maven (fastest for development)
 
 ```bash
-# Start Postgres + Mailhog
+# Start Postgres + Mailhog only
 docker-compose -f docker/docker-compose.local.yml up postgres mailhog -d
 
 # Run with local profile (Flyway migrations run automatically)
@@ -276,10 +276,30 @@ mvn spring-boot:run -Dspring-boot.run.profiles=local
 
 Mailhog web UI (catches all outbound email): http://localhost:8025
 
+### Option B — Full Docker Compose (all services including app)
+
+```bash
+# Copy and fill in env vars
+cp docker/.env.example docker/.env
+
+# Start everything
+docker-compose -f docker/docker-compose.local.yml up --build
+```
+
 ### Build
 
 ```bash
 mvn clean package -DskipTests
+```
+
+### Docker image
+
+```bash
+# Build image
+docker build -t identity-service:latest .
+
+# Run (requires env vars)
+docker run -p 8080:8080 --env-file docker/.env identity-service:latest
 ```
 
 ### Test
