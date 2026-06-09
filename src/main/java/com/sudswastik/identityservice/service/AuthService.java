@@ -36,6 +36,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
@@ -77,14 +78,16 @@ public class AuthService {
 
     public AuthResponse login(LoginRequest request) {
         try {
+            String hash = computeSecretHash(request.email());
+            var params = new java.util.HashMap<String, String>();
+            params.put("USERNAME", request.email());
+            params.put("PASSWORD", request.password());
+            if (hash != null) params.put("SECRET_HASH", hash);
             var response = cognitoClient.adminInitiateAuth(r -> r
                     .authFlow(AuthFlowType.ADMIN_USER_PASSWORD_AUTH)
                     .userPoolId(userPoolId)
                     .clientId(clientId)
-                    .authParameters(Map.of(
-                            "USERNAME", request.email(),
-                            "PASSWORD", request.password()
-                    )));
+                    .authParameters(params));
 
             if (response.challengeName() != null) {
                 return AuthResponse.builder()
@@ -94,11 +97,13 @@ public class AuthService {
             }
 
             var result = response.authenticationResult();
+            String cognitoUsername = extractUsernameFromJwt(result.accessToken());
             return AuthResponse.builder()
                     .accessToken(result.accessToken())
                     .idToken(result.idToken())
                     .refreshToken(result.refreshToken())
                     .expiresIn(result.expiresIn())
+                    .username(cognitoUsername)
                     .build();
         } catch (NotAuthorizedException | UserNotFoundException e) {
             throw new AuthException("Invalid email or password.");
@@ -111,15 +116,17 @@ public class AuthService {
 
     public AuthResponse respondToMfaChallenge(MfaChallengeRequest request) {
         try {
+            String hash = computeSecretHash(request.email());
+            var challengeResponses = new java.util.HashMap<String, String>();
+            challengeResponses.put("USERNAME", request.email());
+            challengeResponses.put("SOFTWARE_TOKEN_MFA_CODE", request.mfaCode());
+            if (hash != null) challengeResponses.put("SECRET_HASH", hash);
             var response = cognitoClient.adminRespondToAuthChallenge(r -> r
                     .challengeName(ChallengeNameType.SOFTWARE_TOKEN_MFA)
                     .clientId(clientId)
                     .userPoolId(userPoolId)
                     .session(request.session())
-                    .challengeResponses(Map.of(
-                            "USERNAME", request.email(),
-                            "SOFTWARE_TOKEN_MFA_CODE", request.mfaCode()
-                    )));
+                    .challengeResponses(challengeResponses));
 
             var result = response.authenticationResult();
             return AuthResponse.builder()
@@ -139,19 +146,22 @@ public class AuthService {
 
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         try {
-            // AdminInitiateAuth avoids needing SECRET_HASH for refresh
+            String hash = computeSecretHash(request.username());
+            var params = new java.util.HashMap<String, String>();
+            params.put("REFRESH_TOKEN", request.refreshToken());
+            if (hash != null) params.put("SECRET_HASH", hash);
             var response = cognitoClient.adminInitiateAuth(r -> r
                     .authFlow(AuthFlowType.REFRESH_TOKEN_AUTH)
                     .userPoolId(userPoolId)
                     .clientId(clientId)
-                    .authParameters(Map.of("REFRESH_TOKEN", request.refreshToken())));
+                    .authParameters(params));
 
             var result = response.authenticationResult();
-            // Cognito does not issue a new refresh token on token refresh
             return AuthResponse.builder()
                     .accessToken(result.accessToken())
                     .idToken(result.idToken())
                     .expiresIn(result.expiresIn())
+                    .username(request.username())
                     .build();
         } catch (NotAuthorizedException e) {
             throw new AuthException("Invalid or expired refresh token.");
@@ -239,6 +249,22 @@ public class AuthService {
             return new MessageResponse("If an unconfirmed account with that email exists, a code has been resent.");
         } catch (CognitoIdentityProviderException e) {
             throw new AuthException(e.awsErrorDetails().errorMessage());
+        }
+    }
+
+    private String extractUsernameFromJwt(String accessToken) {
+        try {
+            String payload = accessToken.split("\\.")[1];
+            String json = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
+            // parse "username":"<value>" from the JSON string
+            int idx = json.indexOf("\"username\":\"");
+            if (idx == -1) return null;
+            int start = idx + 12;
+            int end = json.indexOf("\"", start);
+            return json.substring(start, end);
+        } catch (Exception e) {
+            log.warn("Failed to extract username from access token", e);
+            return null;
         }
     }
 

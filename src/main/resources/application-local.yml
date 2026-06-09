@@ -28,6 +28,7 @@ aws:
   cognito:
     user-pool-id: ${COGNITO_USER_POOL_ID}
     client-id: ${COGNITO_CLIENT_ID}
+    client-secret: ${COGNITO_CLIENT_SECRET:}
 
 app:
   email:

@@ -30,3 +30,7 @@ logs/
 # Agent
 .claude
 CLAUDE.md
+TESTING.md
+
+# Postman
+postman/
